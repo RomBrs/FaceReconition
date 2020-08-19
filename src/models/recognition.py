@@ -95,7 +95,7 @@ class Embedding:
                                 image_size=self.cfg.INSIGHTFACE.PREPROCESS.SIZE)
             transformed = self.transform(image = warped)["image"] 
             with torch.no_grad():
-                features =self. model(transformed.unsqueeze(0))
+                features =self.model( transformed.unsqueeze(0).to(self.cfg.DEVICE) )
             output[idx] = (warped, features.numpy() )
         return output
         
