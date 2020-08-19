@@ -96,6 +96,6 @@ class Embedding:
             transformed = self.transform(image = warped)["image"] 
             with torch.no_grad():
                 features =self.model( transformed.unsqueeze(0).to(self.cfg.DEVICE) )
-            output[idx] = (warped, features.numpy() )
+            output[idx] = (warped, features.cpu().numpy() )
         return output
         
