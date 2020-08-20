@@ -1,2 +1,2 @@
 # Requirements
-SORT - https://github.com/abewley/sort
+SORT into folder "repos" - https://github.com/abewley/sort
