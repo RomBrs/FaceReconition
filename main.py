@@ -3,7 +3,9 @@ from src.models.detection import DetectorMTCNN
 from src.models.recognition import Embedding
 from src.utils.blur_detection import is_blurred
 from src.utils.head_position import HeadPositionDetector
-from src.utils.utils import convert_coords, is_position_bad, clear_directory
+from src.utils.utils import convert_coords, is_position_bad, clear_directory, get_colors, plot_pose_cube, draw_axis
+
+from repos.sort.sort import Sort
 
 import time
 from sklearn.neighbors import NearestNeighbors
@@ -21,10 +23,11 @@ clear_directory(cfg.DIR_BAD_IMAGES)
 # Video
 cap = cv2.VideoCapture(0)
 
-# Models (detection + recognition)
+# Models (detection + recognition + head position + tracker)
 detector = DetectorMTCNN(cfg)
 embedding = Embedding('iresnet34', cfg)
 head_position = HeadPositionDetector(cfg)
+mot_tracker  = Sort( **cfg.TRACKER.SORT.ARGS)
 
 # Score base
 base_imgs_path = "C:/Users/rusrob/Python_files/SAS/29_FAMILY/DemoIpy/FaceReconition/base_embeddings/"
@@ -83,8 +86,9 @@ base_emb = np.array(base_emb).squeeze(1)
 print("Base size: ", len(base_emb))
 
 # Fit KNN
-knn = NearestNeighbors(n_neighbors=3, algorithm='ball_tree').fit(base_emb)
+knn = NearestNeighbors(n_neighbors=3, algorithm='kd_tree').fit(base_emb)
 
+person_color = {}
 while True:
     _, frame = cap.read()
     
@@ -95,11 +99,15 @@ while True:
     try:
         image, bounding_boxes, probabilites , points = detector(frame, input_img_type = "BGR", prob_cutoff = cfg.MTCNN.CUTOFF_FOR_INPUT_EMBEDDINGS)
         out = embedding( image, bounding_boxes, probabilites , points)
+        dets = np.concatenate( [bounding_boxes, probabilites[:,None] ] , axis=1) # for tracker
+
         rgb = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
         # Project KP on associated face (for face pose detection)
         points_projected = convert_coords(points, bounding_boxes, size = cfg.INSIGHTFACE.PREPROCESS.IMAGE_SIZE)
         yaw_pitch_roll = head_position.get_yaw_pitch_roll( points_projected )
+
+        trackers = mot_tracker.update(dets)
 
         for idx in range(probabilites.shape[0]):
 
@@ -110,7 +118,16 @@ while True:
             
             # Face rectangle
             x1,y1,x2,y2 = bounding_boxes[idx]
-            cv2.rectangle(rgb, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            if cfg.PLOT_RECTANGLE:
+                cv2.rectangle(rgb, (x1, y1), (x2, y2), (0, 255, 0), 3)
+
+            # Face position
+            if cfg.PLOT_POSE == 2:
+                rgb = plot_pose_cube(rgb, -yaw_pitch_roll[idx][0], -yaw_pitch_roll[idx][1], -yaw_pitch_roll[idx][2],
+                        int((x1 + x2) / 2)  ,int((y1 + y2) / 2))
+            if cfg.PLOT_POSE == 1:
+                rgb = draw_axis(rgb, -yaw_pitch_roll[idx][0], -yaw_pitch_roll[idx][1], -yaw_pitch_roll[idx][2],
+                        int((x1 + x2) / 2)  ,int((y1 + y2) / 2))
 
             # Face probability        
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -189,6 +206,19 @@ while True:
             rgb = cv2.putText(rgb,  base_name[distances_argsort[i]],
                                 ((i)*size, rgb.shape[0] - size-15), font,  
                             fontScale, color, thickness, cv2.LINE_AA) 
+
+
+        # Plot tracks
+        if cfg.PLOT_TRACKERS:
+            for i in trackers:
+                idx = i[-1]
+                if idx not in person_color:
+                    person_color[idx] = get_colors()
+                idx_color = person_color[idx]
+                cv2.rectangle(rgb, tuple(i[:2].astype(int)),  tuple(i[2:4].astype(int)), tuple(idx_color.tolist()), 3 )
+                rgb = cv2.putText(rgb,  str(idx),
+                                    tuple(i[2:4].astype(int)+3), font,  
+                                fontScale, tuple(idx_color.tolist()), 3, cv2.LINE_AA) 
                     
     except Exception as e:
         print(e)
@@ -199,100 +229,3 @@ while True:
     key = cv2.waitKey(1)
     if key == 27:
         break
-
-    # # Face detection
-    # faces = detector(gray)
-    # for face_idx, face in enumerate(faces):
-    #     x1 = face.left()
-    #     y1 = face.top()
-    #     x2 = face.right()
-    #     y2 = face.bottom()
-        
-    #     # Landmark detection
-    #     landmarks = predictor(gray, face)
-
-    #     # Landmaks for alignment
-    #     normilized_rgb_face = face_aligner.align(rgb, landmarks)
-    #     normilized_gray_face = face_aligner.align(gray, landmarks)
-    #     # face_chip = get_face_chip(frame, landmarks, size=224)
-
-    #     # Face Recognition
-    #     face_id = None
-    #     # rgb[y1:y2,x1:x2,:]
-    #     current_face_desc = face_recognizer.recognize(normilized_rgb_face)
-    #     # is_new_face = True
-    #     for face_desc in face_storage:
-    #         distance = euclidean(face_desc['desc'], current_face_desc)
-    #         if distance < face_similarity_threshold:
-    #             face_id = face_desc['id']
-    #             break
-    #             # is_new_face = False
-    #     # if is_new_face and len(face_storage) < face_storage_limit:
-    #     #     face_storage.append({
-    #     #         'desc': current_face_desc,
-    #     #         'id': last_face_id
-    #     #     })
-    #     #     last_face_id +=1
-
-    #     # Emotion and gender recognition
-    #     # try:
-    #     #     # g_x1, g_y1, g_x2, g_y2 = apply_offsets((x1, y1, x2, y2), gender_offsets)
-    #     #     # rgb_face = frame[g_y1:g_y2, g_x1:g_x2]
-
-    #     #     e_x1, e_y1, e_x2, e_y2 = apply_offsets((x1, y1, x2, y2), gender_offsets)
-    #     #     gray_face = gray[e_y1:e_y2, e_x1:e_x2]
-
-    #     #     # rgb_face = cv2.resize(rgb_face, (gender_target_size))
-    #     #     # gray_face = cv2.resize(gray_face, (gender_target_size))
-    #     #     gray_face = cv2.resize(normilized_gray_face, (gender_target_size))
-
-    #     #     gray_face = gray_face.astype('float32') / 255.0
-    #     #     gray_face = np.expand_dims(gray_face, 0)
-    #     #     gray_face = np.expand_dims(gray_face, -1)
-    #     #     # emotion_label_arg = np.argmax(emotion_classifier.predict(gray_face))
-    #     #     # emotion_text = emotion_labels[emotion_label_arg]
-
-    #     #     # rgb_face = np.expand_dims(rgb_face, 0)
-    #     #     # rgb_face = rgb_face.astype('float32') / 255.0
-    #     #     gender_prediction = gender_classifier.predict(gray_face)
-    #     #     gender_label_arg = np.argmax(gender_prediction)
-    #     #     gender_text = gender_labels[gender_label_arg]
-    #     # except Exception as ex:
-    #     #     print(ex)
-    #     #     print('Image can not be resized.')
-        
-
-    #     # Plot
-    #     # Face rectangle
-    #     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
-        
-    #     # Face keypoints
-    #     for n in range(0, 68):
-    #         x = landmarks.part(n).x
-    #         y = landmarks.part(n).y
-    #         cv2.circle(frame, (x, y), 4, (255, 0, 0), -1)
-
-    #     # Emotion text
-    #     # TODO: Добавить проверку на крайние значения
-    #     # cv2.putText(frame, emotion_text, (x2, y1 -20), \
-    #     #         cv2.FONT_HERSHEY_SIMPLEX, \
-    #     #         fontScale=2, color=(0,255,0), thickness=2, lineType=cv2.LINE_AA)
-    #     # Gender text
-    #     # cv2.putText(frame, gender_text, (x2, y1 - 45), \
-    #     #         cv2.FONT_HERSHEY_SIMPLEX, \
-    #     #         fontScale=1, color=(255,0,0), thickness=2, lineType=cv2.LINE_AA)
-
-
-    #     # Print face id
-    #     if face_id is not None:
-    #         cv2.putText(frame, face_id, (x2, y1 - 60), \
-    #             cv2.FONT_HERSHEY_SIMPLEX, \
-    #             fontScale=1, color=(0,0,255), thickness=2, lineType=cv2.LINE_AA)
-
-    #     # Plot face 
-    #     if face_idx < 5:
-    #         frame[:128, face_idx*128:(face_idx + 1)*128, :] \
-    #             = cv2.cvtColor(cv2.resize(normilized_rgb_face, (128, 128)), cv2.COLOR_RGB2BGR)
-
-
-	
